@@ -1,6 +1,6 @@
 # recasm - ReCOP Assembler
 
-Okay, here is an assembler. \ 
+Okay, here is an assembler. \
 However, it is not that good. \
 Be nice ;-;
 
@@ -60,11 +60,6 @@ Operands are prefixed with:
 - Immediate "`#`"
 - Direct "`$`"
 
-### Output
-
-The output is a text file containing each instruction in hexadecimal on separate
-lines so that you can chuck it in C or VHDL.
-
 Example:
 ```
 nop
@@ -74,3 +69,9 @@ add r1 r1
 or r2 r1
 and r1 #0
 ```
+
+### Output
+
+The output is a text file containing each instruction in hexadecimal on separate
+lines so that you can chuck it in C or VHDL.
+
