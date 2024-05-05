@@ -5,6 +5,7 @@ use deku::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 
+/// ReCOP Instruction definition
 #[derive(PartialEq, Debug, DekuRead, DekuWrite)]
 #[deku(endian = "big")]
 struct Inst {
@@ -19,6 +20,7 @@ struct Inst {
     operand: i16,
 }
 
+/// Opcode as specified in the Instruction file
 #[derive(Debug, serde::Deserialize)]
 struct Opcode {
     opcode: u8,
@@ -28,6 +30,7 @@ struct Opcode {
     dir: Option<bool>,
 }
 
+/// Enums for each ReCOP addressing mode
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum AddrMode {
     Inh = 0,
@@ -36,6 +39,7 @@ enum AddrMode {
     Dir = 3,
 }
 
+/// Overly complicated generic function to import toml files
 pub fn import_toml<T: serde::de::DeserializeOwned>(
     path: &str,
 ) -> anyhow::Result<HashMap<String, T>> {
@@ -49,6 +53,7 @@ pub fn import_toml<T: serde::de::DeserializeOwned>(
     Ok(tiles)
 }
 
+/// Possible assembler errors
 #[derive(Debug)]
 enum Error {
     Read,
@@ -59,6 +64,7 @@ enum Error {
     OperandParse,
 }
 
+/// Error with line and contents of line
 struct AsmError<'a> {
     err: Error,
     line: u32,
@@ -66,6 +72,7 @@ struct AsmError<'a> {
 }
 
 impl<'a> AsmError<'a> {
+    /// Creates a new `AsmError`
     fn new(err: Error, line: u32, contents: &'a str) -> Self {
         Self {
             err,
@@ -76,6 +83,7 @@ impl<'a> AsmError<'a> {
 }
 
 impl std::fmt::Display for Error {
+    /// Error message output
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Error::Read => write!(f, "failed to read file"),
@@ -88,6 +96,7 @@ impl std::fmt::Display for Error {
     }
 }
 
+/// CLI args
 use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -100,7 +109,6 @@ struct Args {
 }
 
 fn main() {
-    // let args: Vec<String> = std::env::args().collect();
     let args = Args::parse();
 
     let opcode_map = match import_toml::<Opcode>(&args.instructions) {
