@@ -203,8 +203,6 @@ fn lex(input: String) -> Vec<Vec<Token>> {
             .map(|x| x.trim().chars().collect())
             .collect();
 
-        println!("{line}, {symbols:?}");
-
         for symbol in symbols {
             line_tokens.push(match symbol[0] {
                 'r' => Token::new(TokenType::Reg, symbol[1..].iter().collect()),
