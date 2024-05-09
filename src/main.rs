@@ -152,8 +152,9 @@ fn main() {
         }
     };
 
-    let instructions = match assemble(input, opcode_map) {
+    let instructions = match assemble(&input, opcode_map) {
         Err(error) => {
+            let lines: Vec<_> = input.trim().split("\n").map(|x| x.trim()).collect();
             let _ = execute!(
                 std::io::stdout(),
                 SetForegroundColor(Color::Red),
@@ -163,7 +164,7 @@ fn main() {
                 Print(": "),
                 Print(format!("{}\n", error.err)),
                 SetAttribute(Attribute::Reset),
-                // Print(format!(" {:>2} │ {}\n", error.line, error.contents))
+                Print(format!(" {:>2} │ {}\n", error.line, lines[error.line]))
             );
             return;
         }
@@ -181,9 +182,20 @@ fn main() {
         Err(_) => println!("Could not write to file {}", output_path),
         Ok(_) => {}
     };
+
+    let _ = execute!(
+        std::io::stdout(),
+        SetForegroundColor(Color::DarkGreen),
+        SetAttribute(Attribute::Bold),
+        Print("assembled"),
+        SetForegroundColor(Color::Reset),
+        Print(": "),
+        SetAttribute(Attribute::Reset),
+        Print(format!("wrote output to {}\n", output_path))
+    );
 }
 
-fn assemble(input: String, opcodes: HashMap<String, Opcode>) -> Result<Vec<Inst>, AsmError> {
+fn assemble(input: &String, opcodes: HashMap<String, Opcode>) -> Result<Vec<Inst>, AsmError> {
     let input = input.to_lowercase();
     let tokens = lex(input);
     parse(tokens, opcodes)
