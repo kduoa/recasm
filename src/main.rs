@@ -24,6 +24,7 @@ struct Inst {
 #[derive(Debug, serde::Deserialize)]
 struct Opcode {
     opcode: u8,
+    args: u8,
     inh: Option<bool>,
     imm: Option<bool>,
     reg: Option<bool>,
@@ -56,29 +57,28 @@ pub fn import_toml<T: serde::de::DeserializeOwned>(
 /// Possible assembler errors
 #[derive(Debug)]
 enum Error {
-    Read,
-    Opcode,
-    AddrMode,
-    Arg2NotReg,
-    InvalidReg,
-    OperandParse,
+    OpcodeExpected,
+    OpcodeUndefined,
+    RegExpected,
+    OperandExpected,
+    ArgsNumber,
+    ImmInvalid,
+    RegInvalid,
+    DirInvalid,
+    InhInvalid,
+    ArgParse,
 }
 
 /// Error with line and contents of line
-struct AsmError<'a> {
+struct AsmError {
     err: Error,
-    line: u32,
-    contents: &'a str,
+    line: usize,
 }
 
-impl<'a> AsmError<'a> {
+impl AsmError {
     /// Creates a new `AsmError`
-    fn new(err: Error, line: u32, contents: &'a str) -> Self {
-        Self {
-            err,
-            line,
-            contents,
-        }
+    fn new(err: Error, line: usize) -> Self {
+        Self { err, line }
     }
 }
 
@@ -86,13 +86,38 @@ impl std::fmt::Display for Error {
     /// Error message output
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Error::Read => write!(f, "failed to read file"),
-            Error::Opcode => write!(f, "opcode cannot be recognised"),
-            Error::AddrMode => write!(f, "addressing mode cannot be inferred"),
-            Error::Arg2NotReg => write!(f, "first argument must be a register"),
-            Error::InvalidReg => write!(f, "invalid register"),
-            Error::OperandParse => write!(f, "operand could not be parsed"),
+            Error::OpcodeExpected => write!(f, "expected an opcode"),
+            Error::OpcodeUndefined => write!(f, "opcode is undefined"),
+            Error::RegExpected => write!(f, "expected a register"),
+            Error::OperandExpected => write!(f, "expected an operand (register/immediate/direct)"),
+            Error::ArgsNumber => write!(f, "opcode expects a different number of arguments"),
+            Error::ImmInvalid => write!(f, "opcode does not have immediate addressing mode"),
+            Error::RegInvalid => write!(f, "opcode does not have register addressing mode"),
+            Error::DirInvalid => write!(f, "opcode does not have direct addressing mode"),
+            Error::InhInvalid => write!(f, "opcode does not have inherent addressing mode"),
+            Error::ArgParse => write!(f, "failed to parse argument"),
         }
+    }
+}
+
+#[derive(Debug)]
+enum TokenType {
+    Label,
+    Opcode,
+    Reg,
+    Imm,
+    Dir,
+}
+
+#[derive(Debug)]
+struct Token {
+    token: TokenType,
+    content: String,
+}
+
+impl Token {
+    fn new(token: TokenType, content: String) -> Self {
+        Self { token, content }
     }
 }
 
@@ -127,11 +152,7 @@ fn main() {
         }
     };
 
-    let input = input.to_lowercase();
-    let input: Vec<_> = input.trim().split("\n").collect();
-
     let instructions = match assemble(input, opcode_map) {
-        Ok(value) => value,
         Err(error) => {
             let _ = execute!(
                 std::io::stdout(),
@@ -142,10 +163,11 @@ fn main() {
                 Print(": "),
                 Print(format!("{}\n", error.err)),
                 SetAttribute(Attribute::Reset),
-                Print(format!(" {:>2} │ {}\n", error.line, error.contents))
+                // Print(format!(" {:>2} │ {}\n", error.line, error.contents))
             );
             return;
         }
+        Ok(value) => value,
     };
 
     let inst: Vec<u32> = instructions
@@ -161,76 +183,141 @@ fn main() {
     };
 }
 
-fn assemble(input: Vec<&str>, opcodes: HashMap<String, Opcode>) -> Result<Vec<Inst>, AsmError> {
-    let mut instructions: Vec<Inst> = Vec::new();
-    for (i, line) in input.iter().enumerate() {
-        let symbols: Vec<_> = line.trim().split(" ").collect();
+fn assemble(input: String, opcodes: HashMap<String, Opcode>) -> Result<Vec<Inst>, AsmError> {
+    let input = input.to_lowercase();
+    let tokens = lex(input);
+    parse(tokens, opcodes)
+}
 
-        let opcode = match opcodes.get(symbols[0]) {
-            Some(value) => value,
-            None => {
-                return Err(AsmError::new(Error::Opcode, i as u32, line));
-            }
-        };
+fn lex(input: String) -> Vec<Vec<Token>> {
+    let lines: Vec<_> = input.trim().split("\n").map(|x| x.trim()).collect();
+    let mut tokens: Vec<Vec<Token>> = Vec::new();
 
-        // decipher
-        let addr_mode = if symbols.len() == 1 && opcode.inh.unwrap_or(false) {
-            // inherent
-            AddrMode::Inh
-        } else if symbols.len() == 3 {
-            let arg3: Vec<_> = symbols[2].to_lowercase().chars().collect();
-            let arg2: Vec<_> = symbols[1].to_lowercase().chars().collect();
-            if arg2[0] != 'r' {
-                return Err(AsmError::new(Error::Arg2NotReg, i as u32, line));
-            }
-            match arg3[0] {
-                'r' => AddrMode::Reg,
-                '#' => AddrMode::Imm,
-                '$' => AddrMode::Dir,
+    for line in lines {
+        let mut line_tokens: Vec<Token> = Vec::new();
+        if line.len() == 0 {
+            continue;
+        }
+        let symbols: Vec<Vec<char>> = line
+            .split(" ")
+            .map(|x| x.trim().chars().collect())
+            .collect();
+
+        println!("{line}, {symbols:?}");
+
+        for symbol in symbols {
+            line_tokens.push(match symbol[0] {
+                'r' => Token::new(TokenType::Reg, symbol[1..].iter().collect()),
+                '#' => Token::new(TokenType::Imm, symbol[1..].iter().collect()),
+                '$' => Token::new(TokenType::Dir, symbol[1..].iter().collect()),
                 _ => {
-                    return Err(AsmError::new(Error::AddrMode, i as u32, line));
+                    if symbol[symbol.len() - 1] == ':' {
+                        Token::new(TokenType::Label, symbol.iter().collect())
+                    } else {
+                        Token::new(TokenType::Opcode, symbol.iter().collect())
+                    }
                 }
-            }
-        } else {
-            return Err(AsmError::new(Error::AddrMode, i as u32, line));
-        };
-
-        let (reg_z, op2): (u8, i16) = if addr_mode != AddrMode::Inh {
-            let arg3: Vec<_> = symbols[2].to_lowercase().chars().collect();
-            let arg2: Vec<_> = symbols[1].to_lowercase().chars().collect();
-            let reg_z: String = arg2[1..].iter().collect();
-            let reg_z = if let Ok(value) = reg_z.parse() {
-                value
-            } else {
-                return Err(AsmError::new(Error::InvalidReg, i as u32, line));
-            };
-            let op2: String = arg3[1..].iter().collect();
-            let op2 = if let Ok(value) = op2.parse() {
-                value
-            } else {
-                return Err(AsmError::new(Error::OperandParse, i as u32, line));
-            };
-            (reg_z, op2)
-        } else {
-            (0, 0)
-        };
-
-        let mut inst = Inst {
-            addr_mode: addr_mode as u8,
-            opcode: opcode.opcode,
-            reg_z,
-            reg_x: 0,
-            operand: 0,
-        };
-
-        match addr_mode {
-            AddrMode::Reg => inst.reg_x = op2 as u8,
-            AddrMode::Imm | AddrMode::Dir => inst.operand = op2,
-            AddrMode::Inh => {}
+            });
         }
 
-        instructions.push(inst);
+        tokens.push(line_tokens);
     }
 
+    tokens
+}
+
+fn parse_addr_mode_operand(
+    operand_token: &TokenType,
+    opcode: &Opcode,
+    i: usize,
+) -> Result<AddrMode, AsmError> {
+    Ok(match operand_token {
+        TokenType::Reg => {
+            if opcode.reg.unwrap_or(false) {
+                AddrMode::Reg
+            } else {
+                return Err(AsmError::new(Error::RegInvalid, i));
+            }
+        }
+        TokenType::Imm => {
+            if opcode.imm.unwrap_or(false) {
+                AddrMode::Imm
+            } else {
+                return Err(AsmError::new(Error::ImmInvalid, i));
+            }
+        }
+        TokenType::Dir => {
+            if opcode.dir.unwrap_or(false) {
+                AddrMode::Dir
+            } else {
+                return Err(AsmError::new(Error::DirInvalid, i));
+            }
+        }
+        TokenType::Opcode => {
+            if opcode.inh.unwrap_or(false) {
+                AddrMode::Inh
+            } else {
+                return Err(AsmError::new(Error::InhInvalid, i));
+            }
+        }
+        _ => return Err(AsmError::new(Error::OperandExpected, i)),
+    })
+}
+
+fn parse(tokens: Vec<Vec<Token>>, opcodes: HashMap<String, Opcode>) -> Result<Vec<Inst>, AsmError> {
+    let mut instructions: Vec<Inst> = Vec::new();
+
+    for (i, line) in tokens.iter().enumerate() {
+        let opcode = if let TokenType::Opcode = &line[0].token {
+            if let Some(value) = opcodes.get(&line[0].content) {
+                value
+            } else {
+                return Err(AsmError::new(Error::OpcodeUndefined, i));
+            }
+        } else {
+            return Err(AsmError::new(Error::OpcodeExpected, i));
+        };
+
+        // arg check
+        if opcode.args as usize != line.len() - 1 {
+            return Err(AsmError::new(Error::ArgsNumber, i));
+        }
+
+        // addr mode check
+        let operand = &line[line.len() - 1];
+        let addr_mode = parse_addr_mode_operand(&operand.token, opcode, i)?;
+        // operand parse
+        let operand = match addr_mode {
+            AddrMode::Inh => 0,
+            _ => {
+                if let Ok(value) = operand.content.parse() {
+                    value
+                } else {
+                    return Err(AsmError::new(Error::ArgParse, i));
+                }
+            }
+        };
+
+        // other args must be regs
+        let mut reg_args = [0u8; 2];
+        for (j, arg) in (1..(line.len() - 1)).enumerate() {
+            if let TokenType::Reg = line[arg].token {
+                reg_args[j] = match line[arg].content.parse() {
+                    Ok(value) => value,
+                    Err(_) => return Err(AsmError::new(Error::ArgParse, i)),
+                };
+            } else {
+                return Err(AsmError::new(Error::RegExpected, i));
+            }
+        }
+
+        instructions.push(Inst {
+            addr_mode: addr_mode as u8,
+            opcode: opcode.opcode,
+            reg_z: reg_args[0],
+            reg_x: reg_args[1],
+            operand,
+        });
+    }
     Ok(instructions)
 }
