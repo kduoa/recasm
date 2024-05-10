@@ -36,8 +36,8 @@ struct Opcode {
 enum AddrMode {
     Inh = 0,
     Imm = 1,
-    Reg = 2,
-    Dir = 3,
+    Dir = 2,
+    Reg = 3,
 }
 
 /// Overly complicated generic function to import toml files
@@ -297,7 +297,7 @@ fn parse(tokens: Vec<Vec<Token>>, opcodes: HashMap<String, Opcode>) -> Result<Ve
         let operand = &line[line.len() - 1];
         let addr_mode = parse_addr_mode_operand(&operand.token, opcode, i)?;
         // operand parse
-        let operand = match addr_mode {
+        let mut operand = match addr_mode {
             AddrMode::Inh => 0,
             _ => {
                 if let Ok(value) = operand.content.parse() {
@@ -318,6 +318,16 @@ fn parse(tokens: Vec<Vec<Token>>, opcodes: HashMap<String, Opcode>) -> Result<Ve
                 };
             } else {
                 return Err(AsmError::new(Error::RegExpected, i));
+            }
+        }
+
+        if addr_mode == AddrMode::Reg {
+            if opcode.args == 1 {
+                reg_args[0] = operand as u8;
+                operand = 0;
+            } else if opcode.args == 2 {
+                reg_args[1] = operand as u8;
+                operand = 0;
             }
         }
 
