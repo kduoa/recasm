@@ -17,7 +17,7 @@ struct Inst {
     reg_z: u8,
     #[deku(bits = 4)]
     reg_x: u8,
-    operand: i16,
+    operand: u16,
 }
 
 /// Opcode as specified in the Instruction file
@@ -29,6 +29,7 @@ struct Opcode {
     imm: Option<bool>,
     reg: Option<bool>,
     dir: Option<bool>,
+    operand_as_reg: Option<u8>,
 }
 
 /// Enums for each ReCOP addressing mode
@@ -100,7 +101,7 @@ impl std::fmt::Display for Error {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum TokenType {
     Label,
     Opcode,
@@ -197,15 +198,17 @@ fn main() {
 
 fn assemble(input: &String, opcodes: HashMap<String, Opcode>) -> Result<Vec<Inst>, AsmError> {
     let input = input.to_lowercase();
-    let tokens = lex(input);
-    parse(tokens, opcodes)
+    let (tokens, labels) = lex(input);
+    println!("{tokens:?}, {labels:?}");
+    parse(tokens, opcodes, labels)
 }
 
-fn lex(input: String) -> Vec<Vec<Token>> {
+fn lex(input: String) -> (Vec<Vec<Token>>, HashMap<String, u16>) {
     let lines: Vec<_> = input.trim().split("\n").map(|x| x.trim()).collect();
     let mut tokens: Vec<Vec<Token>> = Vec::new();
+    let mut labels: HashMap<String, u16> = HashMap::new();
 
-    for line in lines {
+    'line_loop: for (i, line) in lines.into_iter().enumerate() {
         let mut line_tokens: Vec<Token> = Vec::new();
         if line.len() == 0 {
             continue;
@@ -220,9 +223,12 @@ fn lex(input: String) -> Vec<Vec<Token>> {
                 'r' => Token::new(TokenType::Reg, symbol[1..].iter().collect()),
                 '#' => Token::new(TokenType::Imm, symbol[1..].iter().collect()),
                 '$' => Token::new(TokenType::Dir, symbol[1..].iter().collect()),
+                '\'' => Token::new(TokenType::Label, symbol[1..].iter().collect()),
                 _ => {
                     if symbol[symbol.len() - 1] == ':' {
-                        Token::new(TokenType::Label, symbol.iter().collect())
+                        // Token::new(TokenType::Label, symbol.iter().collect())
+                        labels.insert(symbol[..symbol.len() - 1].iter().collect(), i as u16);
+                        continue 'line_loop;
                     } else {
                         Token::new(TokenType::Opcode, symbol.iter().collect())
                     }
@@ -233,7 +239,7 @@ fn lex(input: String) -> Vec<Vec<Token>> {
         tokens.push(line_tokens);
     }
 
-    tokens
+    (tokens, labels)
 }
 
 fn parse_addr_mode_operand(
@@ -249,7 +255,7 @@ fn parse_addr_mode_operand(
                 return Err(AsmError::new(Error::RegInvalid, i));
             }
         }
-        TokenType::Imm => {
+        TokenType::Imm | TokenType::Label => {
             if opcode.imm.unwrap_or(false) {
                 AddrMode::Imm
             } else {
@@ -269,12 +275,15 @@ fn parse_addr_mode_operand(
             } else {
                 return Err(AsmError::new(Error::InhInvalid, i));
             }
-        }
-        _ => return Err(AsmError::new(Error::OperandExpected, i)),
+        } // _ => return Err(AsmError::new(Error::OperandExpected, i)),
     })
 }
 
-fn parse(tokens: Vec<Vec<Token>>, opcodes: HashMap<String, Opcode>) -> Result<Vec<Inst>, AsmError> {
+fn parse(
+    tokens: Vec<Vec<Token>>,
+    opcodes: HashMap<String, Opcode>,
+    labels: HashMap<String, u16>,
+) -> Result<Vec<Inst>, AsmError> {
     let mut instructions: Vec<Inst> = Vec::new();
 
     for (i, line) in tokens.iter().enumerate() {
@@ -300,10 +309,14 @@ fn parse(tokens: Vec<Vec<Token>>, opcodes: HashMap<String, Opcode>) -> Result<Ve
         let mut operand = match addr_mode {
             AddrMode::Inh => 0,
             _ => {
-                if let Ok(value) = operand.content.parse() {
-                    value
+                if operand.token == TokenType::Label {
+                    *labels.get(&operand.content).unwrap()
                 } else {
-                    return Err(AsmError::new(Error::ArgParse, i));
+                    if let Ok(value) = operand.content.parse() {
+                        value
+                    } else {
+                        return Err(AsmError::new(Error::ArgParse, i));
+                    }
                 }
             }
         };
@@ -321,12 +334,9 @@ fn parse(tokens: Vec<Vec<Token>>, opcodes: HashMap<String, Opcode>) -> Result<Ve
             }
         }
 
-        if addr_mode == AddrMode::Reg {
-            if opcode.args == 1 {
-                reg_args[0] = operand as u8;
-                operand = 0;
-            } else if opcode.args == 2 {
-                reg_args[1] = operand as u8;
+        if addr_mode == AddrMode::Reg && opcode.args < 3 {
+            if let Some(value) = opcode.operand_as_reg {
+                reg_args[value as usize] = operand as u8;
                 operand = 0;
             }
         }
