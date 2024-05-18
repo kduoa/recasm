@@ -132,6 +132,8 @@ struct Args {
     #[arg(short, long)]
     instructions: String,
     input: String,
+    #[arg(short, long)]
+    mif_output: Option<String>,
 }
 
 fn main() {
@@ -176,10 +178,26 @@ fn main() {
         .iter()
         .map(|x| x.to_bits().unwrap().load_be())
         .collect();
-    let inst: String = inst.iter().map(|x| format!("{x:08x}\n")).collect();
+    let inst_hex: String = inst.iter().map(|x| format!("{x:08x}\n")).collect();
 
     let output_path = args.output.unwrap_or("out.txt".to_string());
-    match fs::write(&output_path, inst) {
+    match fs::write(&output_path, inst_hex) {
+        Err(_) => println!("Could not write to file {}", output_path),
+        Ok(_) => {}
+    };
+
+    let mut inst_mif =
+        "DEPTH = 32768;\nWIDTH = 32;\nADDRESS_RADIX = HEX;\nDATA_RADIX = HEX;\nCONTENT\nBEGIN\n\n"
+            .to_string();
+    let inst_mif_hex: String = inst
+        .iter()
+        .enumerate()
+        .map(|(addr, data)| format!("{addr:04x}: {data:08x};\n"))
+        .collect();
+    inst_mif.push_str(&inst_mif_hex);
+    inst_mif.push_str("\nEND;\n");
+    let output_path = args.mif_output.unwrap_or("out.mif".to_string());
+    match fs::write(&output_path, inst_mif) {
         Err(_) => println!("Could not write to file {}", output_path),
         Ok(_) => {}
     };
