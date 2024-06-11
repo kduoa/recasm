@@ -217,7 +217,12 @@ fn main() {
 fn assemble(input: &String, opcodes: HashMap<String, Opcode>) -> Result<Vec<Inst>, AsmError> {
     let input = input.to_lowercase();
     let (tokens, labels) = lex(input);
-    println!("{tokens:?}, {labels:?}");
+    for (line, token) in tokens.iter().enumerate() {
+        println!("{line} | {token:?}");
+    }
+    for label in &labels {
+        println!("{} {}", label.0, label.1);
+    }
     parse(tokens, opcodes, labels)
 }
 
@@ -238,6 +243,7 @@ fn lex(input: String) -> (Vec<Vec<Token>>, HashMap<String, u16>) {
 
         for symbol in symbols {
             line_tokens.push(match symbol[0] {
+                ';' => continue 'line_loop, // comment
                 'r' => Token::new(TokenType::Reg, symbol[1..].iter().collect()),
                 '#' => Token::new(TokenType::Imm, symbol[1..].iter().collect()),
                 '$' => Token::new(TokenType::Dir, symbol[1..].iter().collect()),
@@ -245,7 +251,10 @@ fn lex(input: String) -> (Vec<Vec<Token>>, HashMap<String, u16>) {
                 _ => {
                     if symbol[symbol.len() - 1] == ':' {
                         // Token::new(TokenType::Label, symbol.iter().collect())
-                        labels.insert(symbol[..symbol.len() - 1].iter().collect(), i as u16);
+                        labels.insert(
+                            symbol[..symbol.len() - 1].iter().collect(),
+                            tokens.len() as u16,
+                        );
                         continue 'line_loop;
                     } else {
                         Token::new(TokenType::Opcode, symbol.iter().collect())
