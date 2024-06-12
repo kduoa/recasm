@@ -134,13 +134,15 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    #[arg(short, long)]
+    #[arg(short, long, value_name = "FILE")]
     output: Option<String>,
-    #[arg(short, long)]
+    #[arg(short, long, value_name = "FILE")]
     instructions: String,
     input: String,
-    #[arg(short, long)]
+    #[arg(short, long, value_name = "FILE")]
     mif_output: Option<String>,
+    #[arg(short, long, action = clap::ArgAction::SetTrue)]
+    debug: bool,
 }
 
 fn main() -> Result<(), ()> {
@@ -162,7 +164,7 @@ fn main() -> Result<(), ()> {
         }
     };
 
-    let instructions = match assemble(&input, opcode_map) {
+    let instructions = match assemble(&input, opcode_map, args.debug) {
         Err(error) => {
             let lines: Vec<_> = input.trim().split("\n").map(|x| x.trim()).collect();
             let _ = execute!(
@@ -226,14 +228,20 @@ fn main() -> Result<(), ()> {
     Ok(())
 }
 
-fn assemble(input: &String, opcodes: HashMap<String, Opcode>) -> Result<Vec<Inst>, AsmError> {
+fn assemble(
+    input: &String,
+    opcodes: HashMap<String, Opcode>,
+    debug: bool,
+) -> Result<Vec<Inst>, AsmError> {
     let input = input.to_lowercase();
     let (tokens, labels) = lex(input);
-    for (line, token) in tokens.iter().enumerate() {
-        println!("{line} | {token:?}");
-    }
-    for label in &labels {
-        println!("{} {}", label.0, label.1);
+    if debug {
+        for (line, token) in tokens.iter().enumerate() {
+            println!("{line} | {token:?}");
+        }
+        for label in &labels {
+            println!("{} {}", label.0, label.1);
+        }
     }
     parse(tokens, opcodes, labels)
 }
