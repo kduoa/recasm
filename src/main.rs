@@ -73,13 +73,13 @@ enum Error {
 /// Error with line and contents of line
 struct AsmError {
     err: Error,
-    line: usize,
+    token: Token,
 }
 
 impl AsmError {
     /// Creates a new `AsmError`
-    fn new(err: Error, line: usize) -> Self {
-        Self { err, line }
+    fn new(err: Error, token: Token) -> Self {
+        Self { err, token }
     }
 }
 
@@ -101,7 +101,7 @@ impl std::fmt::Display for Error {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 enum TokenType {
     Label,
     Opcode,
@@ -110,15 +110,22 @@ enum TokenType {
     Dir,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Token {
     token: TokenType,
     content: String,
+    line_num: u32,
+    chars: (u32, u32),
 }
 
 impl Token {
-    fn new(token: TokenType, content: String) -> Self {
-        Self { token, content }
+    fn new(token: TokenType, content: String, line_num: u32, chars: (u32, u32)) -> Self {
+        Self {
+            token,
+            content,
+            line_num,
+            chars,
+        }
     }
 }
 
@@ -136,13 +143,13 @@ struct Args {
     mif_output: Option<String>,
 }
 
-fn main() {
+fn main() -> Result<(), ()> {
     let args = Args::parse();
 
     let opcode_map = match import_toml::<Opcode>(&args.instructions) {
         Err(_) => {
             println!("Could not parse instructions in {}", args.instructions);
-            return;
+            return Err(());
         }
         Ok(value) => value,
     };
@@ -151,7 +158,7 @@ fn main() {
         Ok(value) => value,
         Err(_) => {
             println!("Input file {} could not be read", args.input);
-            return;
+            return Err(());
         }
     };
 
@@ -167,9 +174,12 @@ fn main() {
                 Print(": "),
                 Print(format!("{}\n", error.err)),
                 SetAttribute(Attribute::Reset),
-                Print(format!(" {:>2} │ {}\n", error.line, lines[error.line]))
+                Print(format!(
+                    " {:>2} │ {}\n",
+                    error.token.line_num, lines[error.token.line_num as usize]
+                ))
             );
-            return;
+            return Err(());
         }
         Ok(value) => value,
     };
@@ -212,6 +222,8 @@ fn main() {
         SetAttribute(Attribute::Reset),
         Print(format!("wrote output to {}\n", output_path))
     );
+
+    Ok(())
 }
 
 fn assemble(input: &String, opcodes: HashMap<String, Opcode>) -> Result<Vec<Inst>, AsmError> {
@@ -242,12 +254,12 @@ fn lex(input: String) -> (Vec<Vec<Token>>, HashMap<String, u16>) {
             .collect();
 
         for symbol in symbols {
-            line_tokens.push(match symbol[0] {
+            let (token_type, content) = match symbol[0] {
                 ';' => continue 'line_loop, // comment
-                'r' => Token::new(TokenType::Reg, symbol[1..].iter().collect()),
-                '#' => Token::new(TokenType::Imm, symbol[1..].iter().collect()),
-                '$' => Token::new(TokenType::Dir, symbol[1..].iter().collect()),
-                '\'' => Token::new(TokenType::Label, symbol[1..].iter().collect()),
+                'r' => (TokenType::Reg, symbol[1..].iter().collect()),
+                '#' => (TokenType::Imm, symbol[1..].iter().collect()),
+                '$' => (TokenType::Dir, symbol[1..].iter().collect()),
+                '\'' => (TokenType::Label, symbol[1..].iter().collect()),
                 _ => {
                     if symbol[symbol.len() - 1] == ':' {
                         // Token::new(TokenType::Label, symbol.iter().collect())
@@ -257,10 +269,11 @@ fn lex(input: String) -> (Vec<Vec<Token>>, HashMap<String, u16>) {
                         );
                         continue 'line_loop;
                     } else {
-                        Token::new(TokenType::Opcode, symbol.iter().collect())
+                        (TokenType::Opcode, symbol.iter().collect())
                     }
                 }
-            });
+            };
+            line_tokens.push(Token::new(token_type, content, i as u32, (0, 0)));
         }
 
         tokens.push(line_tokens);
@@ -273,34 +286,34 @@ fn parse_addr_mode_operand(
     operand_token: &TokenType,
     opcode: &Opcode,
     i: usize,
-) -> Result<AddrMode, AsmError> {
+) -> Result<AddrMode, Error> {
     Ok(match operand_token {
         TokenType::Reg => {
             if opcode.reg.unwrap_or(false) {
                 AddrMode::Reg
             } else {
-                return Err(AsmError::new(Error::RegInvalid, i));
+                return Err(Error::RegInvalid);
             }
         }
         TokenType::Imm | TokenType::Label => {
             if opcode.imm.unwrap_or(false) {
                 AddrMode::Imm
             } else {
-                return Err(AsmError::new(Error::ImmInvalid, i));
+                return Err(Error::ImmInvalid);
             }
         }
         TokenType::Dir => {
             if opcode.dir.unwrap_or(false) {
                 AddrMode::Dir
             } else {
-                return Err(AsmError::new(Error::DirInvalid, i));
+                return Err(Error::DirInvalid);
             }
         }
         TokenType::Opcode => {
             if opcode.inh.unwrap_or(false) {
                 AddrMode::Inh
             } else {
-                return Err(AsmError::new(Error::InhInvalid, i));
+                return Err(Error::InhInvalid);
             }
         } // _ => return Err(AsmError::new(Error::OperandExpected, i)),
     })
@@ -318,20 +331,23 @@ fn parse(
             if let Some(value) = opcodes.get(&line[0].content) {
                 value
             } else {
-                return Err(AsmError::new(Error::OpcodeUndefined, i));
+                return Err(AsmError::new(Error::OpcodeUndefined, line[0].clone()));
             }
         } else {
-            return Err(AsmError::new(Error::OpcodeExpected, i));
+            return Err(AsmError::new(Error::OpcodeExpected, line[0].clone()));
         };
 
         // arg check
         if opcode.args as usize != line.len() - 1 {
-            return Err(AsmError::new(Error::ArgsNumber, i));
+            return Err(AsmError::new(Error::ArgsNumber, line[0].clone()));
         }
 
         // addr mode check
         let operand = &line[line.len() - 1];
-        let addr_mode = parse_addr_mode_operand(&operand.token, opcode, i)?;
+        let addr_mode = match parse_addr_mode_operand(&operand.token, opcode, i) {
+            Err(err) => return Err(AsmError::new(err, operand.clone())),
+            Ok(addr_mode) => addr_mode,
+        };
         // operand parse
         let mut operand = match addr_mode {
             AddrMode::Inh => 0,
@@ -342,7 +358,7 @@ fn parse(
                     if let Ok(value) = operand.content.parse() {
                         value
                     } else {
-                        return Err(AsmError::new(Error::ArgParse, i));
+                        return Err(AsmError::new(Error::ArgParse, operand.clone()));
                     }
                 }
             }
@@ -354,10 +370,10 @@ fn parse(
             if let TokenType::Reg = line[arg].token {
                 reg_args[j] = match line[arg].content.parse() {
                     Ok(value) => value,
-                    Err(_) => return Err(AsmError::new(Error::ArgParse, i)),
+                    Err(_) => return Err(AsmError::new(Error::ArgParse, line[arg].clone())),
                 };
             } else {
-                return Err(AsmError::new(Error::RegExpected, i));
+                return Err(AsmError::new(Error::RegExpected, line[arg].clone()));
             }
         }
 
