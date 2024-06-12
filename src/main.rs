@@ -261,9 +261,9 @@ fn lex(input: String) -> (Vec<Vec<Token>>, HashMap<String, u16>) {
             .map(|x| x.trim().chars().collect())
             .collect();
 
-        for symbol in symbols {
+        'tokenize_line: for symbol in symbols {
             let (token_type, content) = match symbol[0] {
-                ';' => continue 'line_loop, // comment
+                ';' => break 'tokenize_line, // comment
                 'r' => (TokenType::Reg, symbol[1..].iter().collect()),
                 '#' => (TokenType::Imm, symbol[1..].iter().collect()),
                 '$' => (TokenType::Dir, symbol[1..].iter().collect()),
@@ -284,7 +284,9 @@ fn lex(input: String) -> (Vec<Vec<Token>>, HashMap<String, u16>) {
             line_tokens.push(Token::new(token_type, content, i as u32, (0, 0)));
         }
 
-        tokens.push(line_tokens);
+        if line_tokens.len() > 0 {
+            tokens.push(line_tokens);
+        }
     }
 
     (tokens, labels)
