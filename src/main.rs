@@ -156,6 +156,10 @@ fn main() -> Result<(), ()> {
         Ok(value) => value,
     };
 
+    if args.debug {
+        println!("{opcode_map:?}")
+    }
+
     let input = match fs::read_to_string(&args.input) {
         Ok(value) => value,
         Err(_) => {
